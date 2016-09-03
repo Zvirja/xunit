@@ -1,5 +1,5 @@
 ﻿{
-    "version": "99.99.99-dev",
+    "version": "2.2.0.3239",
     "buildOptions": {
         "compile": [
             "../common/AssemblyExtensions.cs",

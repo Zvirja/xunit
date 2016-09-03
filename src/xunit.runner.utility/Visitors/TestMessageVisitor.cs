@@ -1,6 +1,9 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using Xunit.Abstractions;
+using Xunit.Visitors;
 
 namespace Xunit
 {
@@ -9,7 +12,7 @@ namespace Xunit
     /// can provide access to specific message types without the burden of casting.
     /// </summary>
     [Obsolete("This class has poor performance; please use TestMessageSink instead.")]
-    public class TestMessageVisitor : LongLivedMarshalByRefObject, IMessageSink
+    public class TestMessageVisitor : LongLivedMarshalByRefObject, IMessageSinkWithTypes
     {
         /// <summary>
         /// Dispatches the message to the given callback, if it's of the correct type.
@@ -35,60 +38,93 @@ namespace Xunit
         /// <typeparam name="TMessage">The message type</typeparam>
         /// <param name="message">The message</param>
         /// <param name="callback">The callback</param>
+        /// <param name="types"></param>
         /// <returns>The result of the callback, if called; <c>true</c>, otherwise</returns>
-        bool DoVisit<TMessage>(IMessageSinkMessage message, Func<TestMessageVisitor, TMessage, bool> callback)
+        bool DoVisit<TMessage>(IMessageSinkMessage message, Func<TestMessageVisitor, TMessage, bool> callback, HashSet<string> types)
             where TMessage : class, IMessageSinkMessage
         {
-            var castMessage = message as TMessage;
+            var castMessage = Cast<TMessage>(message, types);
             if (castMessage != null)
                 return callback(this, castMessage);
 
             return true;
         }
 
+        /// <summary>
+        /// Attempts to optimally cast a message to the given message type, using the optional hash of
+        /// interface types to improve casting performance.
+        /// </summary>
+        /// <typeparam name="TMessage">The desired destination message type.</typeparam>
+        /// <param name="message">The message to test and cast.</param>
+        /// <param name="types">The optional hash set of supported types.</param>
+        /// <returns>The message as <typeparamref name="TMessage"/>, or <c>null</c>.</returns>
+        protected TMessage Cast<TMessage>(IMessageSinkMessage message, HashSet<string> types) where TMessage : class, IMessageSinkMessage
+            => types == null || types.Contains(typeof(TMessage).FullName) ? message as TMessage : null;
+        
+        /// <summary>
+        /// Gets the message types as a HashSet&lt;string&gt; to be used for faster lookups.
+        /// </summary>
+        /// <param name="messageTypes">The message type array.</param>
+        /// <returns>The message types as a hash set..</returns>
+        protected static HashSet<string> GetMessageTypesAsHashSet(string[] messageTypes)
+            => messageTypes == null ? null : new HashSet<string>(messageTypes, StringComparer.OrdinalIgnoreCase);
+
         /// <inheritdoc/>
         public virtual bool OnMessage(IMessageSinkMessage message)
         {
+            var messageTypes = GetMessageTypesAsHashSet(ThreadStack<string[]>.Current);
+
             return
-                DoVisit<ITestAssemblyDiscoveryFinished>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestAssemblyDiscoveryStarting>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestAssemblyExecutionFinished>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestAssemblyExecutionStarting>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestExecutionSummary>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<IAfterTestFinished>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<IAfterTestStarting>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<IBeforeTestFinished>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<IBeforeTestStarting>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<IDiagnosticMessage>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<IDiscoveryCompleteMessage>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<IErrorMessage>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestAssemblyCleanupFailure>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestAssemblyFinished>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestAssemblyStarting>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestCaseCleanupFailure>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestCaseDiscoveryMessage>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestCaseFinished>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestOutput>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestCaseStarting>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestClassCleanupFailure>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestClassConstructionFinished>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestClassConstructionStarting>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestClassDisposeFinished>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestClassDisposeStarting>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestClassFinished>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestClassStarting>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestCleanupFailure>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestCollectionCleanupFailure>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestCollectionFinished>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestCollectionStarting>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestFailed>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestFinished>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestMethodCleanupFailure>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestMethodFinished>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestMethodStarting>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestPassed>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestSkipped>(message, (t, m) => t.Visit(m)) &&
-                DoVisit<ITestStarting>(message, (t, m) => t.Visit(m));
+                DoVisit<ITestAssemblyDiscoveryFinished>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestAssemblyDiscoveryStarting>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestAssemblyExecutionFinished>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestAssemblyExecutionStarting>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestExecutionSummary>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<IAfterTestFinished>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<IAfterTestStarting>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<IBeforeTestFinished>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<IBeforeTestStarting>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<IDiagnosticMessage>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<IDiscoveryCompleteMessage>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<IErrorMessage>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestAssemblyCleanupFailure>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestAssemblyFinished>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestAssemblyStarting>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestCaseCleanupFailure>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestCaseDiscoveryMessage>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestCaseFinished>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestOutput>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestCaseStarting>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestClassCleanupFailure>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestClassConstructionFinished>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestClassConstructionStarting>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestClassDisposeFinished>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestClassDisposeStarting>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestClassFinished>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestClassStarting>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestCleanupFailure>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestCollectionCleanupFailure>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestCollectionFinished>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestCollectionStarting>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestFailed>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestFinished>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestMethodCleanupFailure>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestMethodFinished>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestMethodStarting>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestPassed>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestSkipped>(message, (t, m) => t.Visit(m), messageTypes) &&
+                DoVisit<ITestStarting>(message, (t, m) => t.Visit(m), messageTypes);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public bool OnMessageWithTypes(IMessageSinkMessage message, string[] messageTypes)
+        {
+            using (ThreadStack<string[]>.EnterScope(messageTypes))
+            {
+               return this.OnMessage(message);
+            }
         }
 
         /// <summary>
